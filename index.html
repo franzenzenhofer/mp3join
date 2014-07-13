@@ -1,0 +1,311 @@
+<html><head>
+<script src="cs/extras/coffee-script.js" ></script>
+<script type="text/coffeescript">
+_DEBUG_ = true
+_r = window
+_d = _r.document
+
+$$ = (id) -> _d.getElementById(id)
+
+$c = (class_name) -> getElementsByClassName(class_name)
+
+dlog = (msgs...) ->
+  if not _DEBUG_ then return false
+  for msg in msgs
+    do (msg) ->
+      console.log(msg)
+   return true
+
+#some global states
+
+#our modle
+_M = []
+
+#our cache
+_array_buffer_cache = {} 
+
+#our final result (a blob url)
+_F = ""
+
+
+#pure functional functions
+
+switchInArray = (ar, a, b) ->
+  if not Array.isArray(ar) then throw new Error('First argument must be an array.')
+  a_temp = ar[a]
+  b_temp = ar[b]
+  ar[b] = a_temp
+  ar[a] = b_temp
+  return ar
+
+up = (ar, nr) -> switchInArray(ar,nr,nr-1)
+
+down = (ar, nr) -> switchInArray(ar,nr,nr+1)
+
+deleteFromArray = (ar, nr) -> ar.slice(0,nr).concat(ar.slice(nr+1))
+  
+devNull = () -> return null
+
+fileJoin = (file_array, mime_type) -> new Blob(file_array, {type: mime_type})
+  
+mp3Join = (mp3_array) -> fileJoin(mp3_array, 'audio/mp3')
+
+getBlobUrl = (blob) -> _r.URL.createObjectURL(blob)
+
+readFile = (file, onload_callback = devNull, error_callback = devNull) ->
+  reader = new FileReader()
+  reader.onload = onload_callback
+  reader.onerror = error_callback
+  reader.readAsArrayBuffer(file)
+
+fileSelect = (event, action_per_file, finish_callback) ->
+  files = event.target.files
+  r = []
+  for f in files
+    do (f) ->
+      r = action_per_file(f)
+  finish_callback(r)
+  
+#functions that rely on some state
+  
+getArrayBuffersViaFileArray = (file_array) ->
+  r = []
+  for f in file_array
+    r.push(_array_buffer_cache[escape(f.name)])
+  dlog(r)
+  return r
+  
+checkFileApiSupport = () ->
+  if _r.File and _r.FileReader and _r.FileList and _r.Blob
+    dlog('All necessary APIs supported')
+    return true
+  dlog('Not all necessary APIs supported')
+  return false
+  
+createGlobalMergedFileUrl = () ->
+  _F = getBlobUrl(mp3Join(getArrayBuffersViaFileArray(_M)))
+
+  
+#functions that have side effects in the DOM
+
+addClass = (dom_element, class_name) ->
+  dom_element.classList.add(class_name)
+  
+removeClass = (dom_element, class_name) ->
+  dom_element.classList.remove(class_name)
+  
+setDomDisabled = (dom_element, only_children = false ) ->
+  if only_children is false
+    dom_element.setAttribute('disabled', 'disabled') 
+    addClass(dom_element, 'disabled')
+  for el in dom_element.children
+    do (el) ->
+      setDomDisabled(el)
+  return true
+
+removeDomDisabled = (dom_element, only_children = false) ->
+  if only_children is false
+    dom_element.removeAttribute('disabled')
+    removeClass(dom_element, 'disabled')
+  for el in dom_element.children
+    do (el) ->
+      removeDomDisabled(el)
+  return true
+  
+createSortButton = (button_lable, title="", click_listener = devNull, disabled = false) ->
+  #dlog(button_lable, title, click_listener, disabled)
+  b = _d.createElement('button')
+  b.setAttribute('class', 'sort_ui')
+  b.setAttribute('title', title)
+  b.innerHTML = button_lable
+  b.addEventListener('click', click_listener, false)
+  if disabled is true then b.setAttribute('disabled', 'disabled')
+  return b
+
+renderSortableFileList = (files, dom_el) ->
+  #dlog(files,dom_element)
+  dom_el.innerHTML = ''
+  for f,i in files
+    do(f,i) ->
+      li = _d.createElement('li')
+      li.setAttribute('id', escape(f.name))
+      li.innerHTML = escape(f.name).replace('%20', ' ')+' '+Math.round(f.size/1024)+' Kb'  
+      li.appendChild(createSortButton('^', 'move up', (()->_M = up(_M,i);renderSortableFileList(_M,dom_el)), (if i is 0 then true)))
+      li.appendChild(createSortButton('v', 'move down', (()->_M = down(_M,i);renderSortableFileList(_M,dom_el)), (if i is files.length-1 then true)))
+      li.appendChild(createSortButton('x', 'delete', (()->_M = deleteFromArray(_M,i);renderSortableFileList(_M,dom_el);)))
+      if _array_buffer_cache[escape(f.name)]? then addClass(li, 'ok')
+      dom_el.appendChild(li)
+  if enableMergeFilesStepWithCheck()
+    $$('number_of_files').innerHTML=_M.length+' '
+  else
+    $$('number_of_files').innerHTML=''
+
+printFileError = (msg) ->
+  li = _d.createElement('li')
+  li.innerHTML = msg
+  e = $$('files_error_msgs')
+  removeClass(e,'hidden')
+  e.appendChild(li)
+  
+areAllFilesCached = (files) ->
+  for f in files
+    if _array_buffer_cache[_r.escape(f.name)] is undefined
+      return false
+  return true
+        
+enableMergeFilesStepWithCheck = () ->
+  if areAllFilesCached(_M) and _M.length > 1
+    enableMergeFilesStep()
+    return true
+  else
+    setDomDisabled($$('step_merge_files'))
+    return false
+  
+
+readFileIntoArrayBufferCache = (file) ->
+  addToCache = (evt) ->   
+    if evt.target.readyState = FileReader.DONE
+      _array_buffer_cache[_r.escape(file.name)]=evt.target.result
+      addClass($$(_r.escape(file.name)),'ok')
+      dlog(_array_buffer_cache)
+      #DONE make a check if all file are loaded into cache
+      #DONE and only then enable the file merge step
+      #DONE until then we have a race condition
+      enableMergeFilesStepWithCheck()
+  readFile(file, addToCache)
+  
+reset = () ->
+  _M = []
+  _array_buffer_cache = {} 
+  _F = ""
+  #nasty clean up logic
+  $$('files_error_msgs').innerHTML = ''
+  temp_ih = $$('step_select_files').innerHTML
+  $$('step_select_files').innerHTML = ''
+  $$('step_select_files').innerHTML = temp_ih.toString()
+  $$('test_in_browser').innerHTML = ''
+  $$('download_merged_file').innerHTML = '<button>Download</button>'
+  $$('download_name').value="mp3join.mp3"
+  renderSortableFileList(_M, $$('sortable_file_list'))
+  init()
+
+#application steps
+
+errorIfApisAreNotSupported = () -> 
+  if checkFileApiSupport() is false
+    $$('api_support_warning').setAttribute('class', 'error')
+    return false
+  return true
+  
+enableSelectFilesStep = () -> 
+  removeDomDisabled($$('step_select_files'))
+  #we need this here, otherwise reset does not work
+  $$('files').addEventListener('change', (evt) ->
+    fileSelect(evt, ((file)->
+      if file.type.match('mp3')
+        _M.push(file)
+        readFileIntoArrayBufferCache(file)
+      else
+        printFileError('Error: '+escape(file.name)+' is not an mp3!')
+      return _M
+    ), (()->enableSortFilesStep()))
+    $$('step_1_headline').innerHTML = "Step 1: Select <i>more</i> mp3 files"
+  , false)
+  dlog(_M)
+  
+enableSortFilesStep = () -> 
+  dlog('enableSort')
+  removeDomDisabled($$('step_sort_files'))
+  renderSortableFileList(_M, $$('sortable_file_list'))
+  startResetStep()
+  
+enableMergeFilesStep = () -> 
+  dlog('enableMerge')
+  removeDomDisabled($$('step_merge_files'))
+  #$$('download_name').focus()
+  
+startTestFileStep = () ->
+  setDomDisabled($$('step_select_files'))
+  setDomDisabled($$('step_sort_files'))
+  setDomDisabled($$('step_merge_files'))
+  removeDomDisabled($$('step_test_file'))
+  $$('test_in_browser').innerHTML = '<audio controls="controls"  name="media"><source src="'+_F+'" type="audio/mp3"></audio>'
+  
+startDownloadFileStep = () ->
+  removeDomDisabled($$('step_download_file'))
+  download_name = $$('download_name').value or "mp3join.mp3"
+  $$('download_merged_file').innerHTML = '<a href="'+_F+'" download="'+download_name+'"><button>Download</button></a>'
+  
+startResetStep = () ->
+  removeDomDisabled($$('step_reset'))
+  
+##set one time UI event listener
+
+$$('reset').addEventListener('click', (()->reset()), false)
+
+$$('start_merge').addEventListener('click', (()->createGlobalMergedFileUrl();startTestFileStep();startDownloadFileStep()), false)
+
+#procedural part
+
+init = () ->
+  
+  setDomDisabled($$('all_steps'), true)
+
+  if not errorIfApisAreNotSupported()
+    return false
+  else
+    enableSelectFilesStep()
+
+init()
+  
+</script>
+<style>
+  .ok {color:green;}
+  .error {color:red;}
+  .hidden {display:none;}
+  .active {color: blue; font-weight: bold;}
+  .inactive {color: yellow;}
+  .disabled {color: gray;}
+</style>
+</head>
+<body>
+  <div id="api_support_warning" class="hidden">Sorry, your browser does not support all necesssary HTML5 features. This app will not work.</div>
+
+
+  <div id="all_steps">
+    <div id="step_select_files">
+      <h2 id="step_1_headline">Step 1: Select mp3 files</h2>
+      <input type="file" id="files" multiple>
+      <p class="note">Select multiple mp3 files, either one after the other or all at once (using the 'Ctrl' or 'Shift' key).</p>
+    </div>
+    
+    <div id="step_sort_files">
+      <h2>Step 2: Sort mp3 files</h2>
+      <ol id="sortable_file_list">
+      </ol>
+      <ul id="files_error_msgs" class="error hidden">
+      </ul>
+    </div>
+    
+    <div id="step_merge_files">
+      <h2>Step 3: Merge files into a single mp3 file</h2>
+      Merge <span id="number_of_files"></span>files into <input type="text" id="download_name" value="mp3join.mp3"><button id="start_merge">Start</button>
+    </div>
+    
+    <div id="step_test_file">
+      <h2>Step 4: Test the new mp3 file</h2>
+      <div id="test_in_browser"></div>
+    </div>
+    
+    <div id="step_download_file">
+      <h2>Step 5: Download the mp3 file</h2>
+      <div id="download_merged_file"><button>Download</button></div>
+    </div>
+    
+    <div id="step_reset">
+      <h2>Step 6: Done or reset</h2>
+      <button id="reset">Reset</button>
+    </div>
+  </div>
+</body>
+</html>

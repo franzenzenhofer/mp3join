@@ -1,0 +1,193 @@
+<html><head>
+ <script src="cs/extras/coffee-script.js" ></script>
+<script type="text/coffeescript">
+_DEBUG_ = true
+root = window
+M = [] 
+M_full = []
+joined_file = undefined
+joined_file_blob_url = undefined
+
+$$ = (id) -> root.document.getElementById(id)
+
+dlog = (msg, debug = _DEBUG_) -> console.log(msg) if debug
+
+fileJoin = (file_array) ->  
+  b = new Blob(file_array, {type: 'audio/mp3', name:"test.mp3", filename: 'test2.mp3'})
+  dlog(b.type)
+  dlog(b.size)
+  return b
+    
+  
+triggerDownload =  (file, name) -> 
+  blob_url = root.URL.createObjectURL(new Blob(file))
+  window.document.location = blob_url
+
+everythingLoaded = () ->
+  for f, i in M
+    return false if not M_full[i]?
+  return true
+
+loadDone = (evt, i) ->
+  if evt.target.readyState = FileReader.DONE
+    M_full[i]=evt.target.result
+    $$('file_nr_'+i).setAttribute('class','loaded')
+  if everythingLoaded()
+    joined_file = fileJoin(M_full)
+    joined_file_blob_url = root.URL.createObjectURL(joined_file)
+    dlog(joined_file_blob_url)
+    $$('test_mp3').innerHTML = 'Test: <audio controls="" autoplay="" name="media"><source src="'+joined_file_blob_url+'" type="audio/mp3"></audio><br><a href="'+joined_file_blob_url+'" target="_blank">'+joined_file_blob_url+'
+  </a>'
+    $$('merge_done').setAttribute('style', 'display:block')
+    $$('merged_file_filename').focus()
+    $$('download').removeAttribute('disabled')
+  return evt
+  
+
+loadFile = (file, end_callback) ->
+  reader = new FileReader()
+  #reader.onloadend = end_callback
+  reader.onload = end_callback
+  #reader.readAsBinaryString(file)
+  reader.readAsArrayBuffer(file)
+
+loadAllFiles = (file_array) ->
+  for b in root.document.getElementsByClassName('sort_ui')
+    do (b) ->
+      b.setAttribute('disabled', 'disabled')
+  
+  $$('start').setAttribute('disabled', 'disabled')
+  $$('files').setAttribute('disabled', 'disabled')
+
+  dlog('load all files')
+  for f, i in file_array
+    do(f,i) ->
+      loadFile(f, (evt)->loadDone(evt,i))
+  
+  
+
+checkFileApiSupport = () ->
+  if root.File and root.FileReader and root.FileList and root.Blob
+    dlog('all necessary APIs supported')
+    return true
+  dlog('not all necessary APIs supported')
+  return false
+  
+addToM = (file) ->
+  M.push(file)
+
+handleFileSelect = (event) ->
+  files = event.target.files
+  for f in files
+    do (f) ->
+      dlog(f)
+      #TODO: check if it's really an mp3
+      #addFileToDom(f, getMp3sId(f))
+      addToM(f)
+      
+  $$('step_one_headline').innerHTML = "1) Select <i>more</i> mp3 files"
+  updateMp3FileList()
+ 
+deleteFromM = (nr) ->
+  M_temp = M.slice(0)
+  M = []
+  for f, i in M_temp
+    do (f,i) ->
+      if i isnt nr then addToM(f)
+  updateMp3FileList()
+  
+switchInM = (a,b) ->
+  a_temp = M[a]
+  b_temp = M[b]
+  M[b] = a_temp
+  M[a] = b_temp
+  updateMp3FileList()
+  
+upM = (nr) -> 
+  dlog('up')
+  switchInM(nr, nr-1)
+
+downM = (nr) -> 
+  dlog('down')
+  switchInM(nr, nr+1)
+  
+updateMp3FileList = () ->
+  $$('mp3_file_list').innerHTML = ''
+  for f,i in M
+    do (f,i) -> 
+      addFileToDom(f,i)
+  return M
+      
+addFileToDom = (file, mp3s_id)  ->
+  li = root.document.createElement('li')
+  li.setAttribute("data-filename", file.name)
+  li.setAttribute("data-lastModifiedDate", file.lastModifiedDate)
+  li.setAttribute("data-type", file.type)
+  li.setAttribute("data-size", file.size)
+  li.setAttribute("data-mp3s", mp3s_id)
+  li.setAttribute("id", 'file_nr_'+mp3s_id)
+  li.innerHTML = escape(file.name)+' ... '+Math.round(file.size/1024)+'kb'+' M['+mp3s_id+']'
+  
+  up = root.document.createElement('button')
+  up.setAttribute('class', 'sort_ui')
+  up.innerHTML = '^'
+  up.addEventListener('click', (() -> upM(mp3s_id)), false)
+  if mp3s_id is 0 then up.setAttribute('disabled', 'disabled')
+  li.appendChild(up)
+  
+  down = root.document.createElement('button')
+  down.setAttribute('class', 'sort_ui')
+  down.innerHTML = 'v'
+  down.addEventListener('click', (() -> downM(mp3s_id)), false)
+  if mp3s_id is M.length-1 then down.setAttribute('disabled', 'disabled')
+  li.appendChild(down)
+  
+  delete_ = root.document.createElement('button')
+  delete_.setAttribute('class', 'sort_ui')
+  delete_.innerHTML = 'x'
+  delete_.addEventListener('click', (() -> deleteFromM(mp3s_id)), false)
+  li.appendChild(delete_)
+  
+  $$('mp3_file_list').appendChild(li)
+     
+#UI event handler
+$$('files').addEventListener('change', handleFileSelect, false)
+
+$$('start').addEventListener('click', (()->loadAllFiles(M)), false)
+
+$$('download').addEventListener('click', (()-> triggerDownload(joined_file, 'test')), false)
+      
+      
+dlog('cs loaded and works')
+
+</script>
+<style>
+  .loaded {color:green;}
+</style>
+</head>
+<body>
+  <h1>mp3join</h1>
+  <p>Merge (a.k.a. join) multiple mp3 files into a single file. 100% client side, all done in the browser. Your files will not be sent over the wire! Your files on your computer, all done thx to moderen HTML5.</p>
+  <h2 id="step_one_headline">1) Select mp3 files</h2>
+  <input type="file" id="files" name="files[]" multiple />
+  <p>You can select multiple files, either in one go or one after the other.</p>
+
+  <h2>2) Sort mp3 files</h2>
+  <ol id="mp3_file_list">
+  </ol>
+  
+  <h2>3) Merge files into a single new file</h2>
+  <button id="start">START</button>
+  <h3 id="merge_done" style="display:none;">Files successfully merged!</h3>
+  
+  <h2>4) Download single mp3 file</h2>
+  <input type="text" width="250px" id="merged_file_filename"><button id="download" disabled="disabled">Download</button>
+  <div id="test_mp3"></div>
+  
+  <h2>5) Done or reset</h2>
+  <p>If something didn't work or you want to merge other mp3 files, just <button>RESET</button>. <br>Otherwise you are finished, have a nice day. If you like you can share this app on Facebook or Twitter. Thx.</p>
+  
+  <div id="debug"></div>
+  
+</body>
+</html>
